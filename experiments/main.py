@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torchvision
 from tqdm import tqdm
+import sys
 
 from results_json import ResultsJSON
 
@@ -128,13 +129,15 @@ def get_model(args):
     k = args.num_neurons
     l = args.num_layers
 
+    device = 'cuda' if args.implementation == 'cuda' else 'cpu'
+
     ####################################################################################################################
 
     if arch == 'randomly_connected':
         logic_layers.append(torch.nn.Flatten())
-        logic_layers.append(LogicLayer(in_dim=in_dim, out_dim=k, **llkw))
+        logic_layers.append(LogicLayer(in_dim=in_dim, out_dim=k, device=device, **llkw))
         for _ in range(l - 1):
-            logic_layers.append(LogicLayer(in_dim=k, out_dim=k, **llkw))
+            logic_layers.append(LogicLayer(in_dim=k, out_dim=k, device=device, **llkw))
 
         model = torch.nn.Sequential(
             *logic_layers,
@@ -158,7 +161,7 @@ def get_model(args):
             'total_num_weights': total_num_weights,
         })
 
-    model = model.to('cuda')
+    model = model.to(device)
 
     print(model)
     if args.experiment_id is not None:
@@ -168,7 +171,7 @@ def get_model(args):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    return model, loss_fn, optimizer
+    return model, loss_fn, optimizer, device
 
 
 def train(model, x, y, loss_fn, optimizer):
@@ -181,13 +184,13 @@ def train(model, x, y, loss_fn, optimizer):
     return loss.item()
 
 
-def eval(model, loader, mode):
+def eval(model, loader, device, mode):
     orig_mode = model.training
     with torch.no_grad():
         model.train(mode=mode)
         res = np.mean(
             [
-                (model(x.to('cuda').round()).argmax(-1) == y.to('cuda')).to(torch.float32).mean().item()
+                (model(x.to(device).round()).argmax(-1) == y.to(device)).to(torch.float32).mean().item()
                 for x, y in loader
             ]
         )
@@ -195,14 +198,14 @@ def eval(model, loader, mode):
     return res.item()
 
 
-def packbits_eval(model, loader):
+def packbits_eval(model, loader, device):
     orig_mode = model.training
     with torch.no_grad():
         model.eval()
         res = np.mean(
             [
-                (model(PackBitsTensor(x.to('cuda').reshape(x.shape[0], -1).round().bool())).argmax(-1) == y.to(
-                    'cuda')).to(torch.float32).mean().item()
+                (model(PackBitsTensor(x.to(device).reshape(x.shape[0], -1).round().bool())).argmax(-1) == y.to(
+                    device)).to(torch.float32).mean().item()
                 for x, y in loader
             ]
         )
@@ -272,7 +275,7 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
 
     train_loader, validation_loader, test_loader = load_dataset(args)
-    model, loss_fn, optim = get_model(args)
+    model, loss_fn, optim, device = get_model(args)
 
     ####################################################################################################################
 
@@ -283,23 +286,23 @@ if __name__ == '__main__':
             desc='iteration',
             total=args.num_iterations,
     ):
-        x = x.to(BITS_TO_TORCH_FLOATING_POINT_TYPE[args.training_bit_count]).to('cuda')
-        y = y.to('cuda')
+        x = x.to(BITS_TO_TORCH_FLOATING_POINT_TYPE[args.training_bit_count]).to(device)
+        y = y.to(device)
 
         loss = train(model, x, y, loss_fn, optim)
 
         if (i+1) % args.eval_freq == 0:
             if args.extensive_eval:
-                train_accuracy_train_mode = eval(model, train_loader, mode=True)
-                valid_accuracy_eval_mode = eval(model, validation_loader, mode=False)
-                valid_accuracy_train_mode = eval(model, validation_loader, mode=True)
+                train_accuracy_train_mode = eval(model, train_loader, device, mode=True)
+                valid_accuracy_eval_mode = eval(model, validation_loader, device, mode=False)
+                valid_accuracy_train_mode = eval(model, validation_loader, device, mode=True)
             else:
                 train_accuracy_train_mode = -1
                 valid_accuracy_eval_mode = -1
                 valid_accuracy_train_mode = -1
-            train_accuracy_eval_mode = eval(model, train_loader, mode=False)
-            test_accuracy_eval_mode = eval(model, test_loader, mode=False)
-            test_accuracy_train_mode = eval(model, test_loader, mode=True)
+            train_accuracy_eval_mode = eval(model, train_loader, device, mode=False)
+            test_accuracy_eval_mode = eval(model, test_loader, device, mode=False)
+            test_accuracy_train_mode = eval(model, test_loader, device, mode=True)
 
             r = {
                 'train_acc_eval_mode': train_accuracy_eval_mode,
@@ -311,9 +314,9 @@ if __name__ == '__main__':
             }
 
             if args.packbits_eval:
-                r['train_acc_eval'] = packbits_eval(model, train_loader)
-                r['valid_acc_eval'] = packbits_eval(model, train_loader)
-                r['test_acc_eval'] = packbits_eval(model, test_loader)
+                r['train_acc_eval'] = packbits_eval(model, train_loader, device)
+                r['valid_acc_eval'] = packbits_eval(model, train_loader, device)
+                r['test_acc_eval'] = packbits_eval(model, test_loader, device)
 
             if args.experiment_id is not None:
                 results.store_results(r)
