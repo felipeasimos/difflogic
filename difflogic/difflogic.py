@@ -2,7 +2,11 @@ import torch
 import numpy as np
 from .functional import bin_op_s, get_unique_connections, GradFactor
 from .packbitstensor import PackBitsTensor
-
+import warnings
+try:
+    import difflogic_cuda
+except ImportError:
+    warnings.warn('Couldn\'t import difflogic_cuda. The code will only run on GPU', ImportWarning)
 
 ########################################################################################################################
 
@@ -137,7 +141,6 @@ class LogicLayer(torch.nn.Module):
         :param x:
         :return:
         """
-        import difflogic_cuda
         assert not self.training
         assert isinstance(x, PackBitsTensor)
         assert x.t.shape[0] == self.in_dim, (x.t.shape, self.in_dim)
@@ -205,13 +208,11 @@ class GroupSum(torch.nn.Module):
 class LogicLayerCudaFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, a, b, w, given_x_indices_of_y_start, given_x_indices_of_y):
-        import difflogic_cuda
         ctx.save_for_backward(x, a, b, w, given_x_indices_of_y_start, given_x_indices_of_y)
         return difflogic_cuda.forward(x, a, b, w)
 
     @staticmethod
     def backward(ctx, grad_y):
-        import difflogic_cuda
         x, a, b, w, given_x_indices_of_y_start, given_x_indices_of_y = ctx.saved_tensors
         grad_y = grad_y.contiguous()
 

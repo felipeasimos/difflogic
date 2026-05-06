@@ -1,6 +1,10 @@
 import torch
 import numpy as np
-
+import warnings
+try:
+    import difflogic_cuda
+except ImportError:
+    warnings.warn('Couldn\'t import difflogic_cuda. The code will only run on GPU', ImportWarning)
 
 class PackBitsTensor:
     def __init__(self, t: torch.BoolTensor, bit_count=32, device='cuda'):
@@ -12,14 +16,12 @@ class PackBitsTensor:
 
         if device == 'cuda':
             t = t.to(device).T.contiguous()
-            import difflogic_cuda
             self.t, self.pad_len = difflogic_cuda.tensor_packbits_cuda(t, self.bit_count)
         else:
             raise NotImplementedError(device)
 
     def group_sum(self, k):
         assert self.device == 'cuda', self.device
-        import difflogic_cuda
         return difflogic_cuda.groupbitsum(self.t, self.pad_len, k)
 
     def flatten(self, start_dim=0, end_dim=-1, **kwargs):
